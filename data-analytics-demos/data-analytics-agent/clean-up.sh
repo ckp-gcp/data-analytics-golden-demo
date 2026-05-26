@@ -39,3 +39,7 @@ rm -r ./agent-code-zip
 rm -r ./dataform-deploy
 rm data-analytics-agent.zip
 rm -r ./agent-code-zip
+rm -r ./agent-code/.adk
+rm -r ./agent-code/data_analytics_agent/.adk
+rm -r ./agent-code/.venv
+find . -name "__pycache__" -type d -exec rm -rv {} +

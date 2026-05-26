@@ -370,6 +370,29 @@ resource "google_project_iam_member" "data_analytics_agent_sa_ca_individualUser"
   ]
 }
 
+# Grant Dataform Admin/Editor role so A2A identity propagation can modify workspaces
+resource "google_project_iam_member" "data_analytics_agent_sa_dataform_admin" {
+  project = var.project_id
+  role    = "roles/dataform.admin"
+  member  = "serviceAccount:${google_service_account.data_analytics_agent_service_account.email}"
+
+  depends_on = [
+    google_project_iam_member.data_analytics_agent_sa_ca_individualUser
+  ]
+}
+
+# https://clouddocs.devsite.corp.google.com/bigquery/docs/data-engineering-agent-pipelines#required_roles 
+# https://clouddocs.devsite.corp.google.com/gemini/data-agents/data-engineering-agent/api-overview#key_api_operations
+resource "google_project_iam_member" "data_analytics_agent_sa_data_agent_stateless_user" {
+  project = var.project_id
+  role    = "roles/geminidataanalytics.dataAgentStatelessUser"
+  member  = "serviceAccount:${google_service_account.data_analytics_agent_service_account.email}"
+
+  depends_on = [
+    google_project_iam_member.data_analytics_agent_sa_dataform_admin
+  ]
+}
+
 
 ####################################################################################
 # Cloud Run Deployment - Deploy cloud run and run as sevice account
