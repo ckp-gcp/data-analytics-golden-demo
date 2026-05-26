@@ -35,7 +35,7 @@ import data_analytics_agent.utils.time_delay.wait_tool as wait_tool
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-GEMINI_MODEL = "gemini-2.5-flash" # Use flash for faster tool calls, pro for reasoning if needed
+GEMINI_MODEL = "gemini-2.5-pro" # Upgraded to pro to avoid loops with new ADK
 
 # This will be the FINAL output schema for the DataEngineeringAutonomousWorkflowAgent (the orchestrator)
 class DataEngineeringWorkflowOutput(BaseModel):
@@ -149,10 +149,12 @@ async def get_failed_data(data_quality_scan_name: str, data_quality_scan_dataset
     }
 
 # Wrapper for data_engineering_tools.generate_data_engineering_fix_prompt
-async def generate_data_enginnering_agent_correction_prompt(failed_rules_details: List[Dict[str, Any]]) -> dict:
+async def generate_data_enginnering_agent_correction_prompt(tool_context: ToolContext) -> dict:
     logger.info("BEGIN: generate_data_enginnering_agent_correction_prompt")
+    failed_rules_details = tool_context.state.get("failed_rules_details", [])
+    
     if not failed_rules_details:
-        logger.error("Error: 'failed_rules_details' is empty.")
+        logger.error("Error: 'failed_rules_details' is empty in session state.")
         return {"data_engineering_prompt": "", "success": False}
     
     result = await data_engineering_tools.generate_data_engineering_fix_prompt(failed_rules_details)
@@ -310,28 +312,43 @@ async def call_bigquery_data_engineering_agent(actual_repository_id: str, actual
     
     # Extract only the relevant text messages and descriptions into a flat list of strings
     extracted_messages = []
-    # Check if 'results' key exists and is a list
-    if success and isinstance(result.get("results"), list):
-        # raw_agent_output_messages is now correctly assigned directly from result["results"]
-        raw_agent_output_messages = result["results"] 
-        
-        for item in raw_agent_output_messages:
-            if isinstance(item, dict) and "messages" in item and isinstance(item["messages"], list):
-                for msg_obj in item["messages"]:
-                    if isinstance(msg_obj, dict) and "agentMessage" in msg_obj and isinstance(msg_obj["agentMessage"], dict):
-                        agent_msg = msg_obj["agentMessage"]
-                        # Extract progressMessage text
-                        if "progressMessage" in agent_msg and isinstance(agent_msg["progressMessage"], dict):
-                            text = agent_msg["progressMessage"].get("textMessage")
+    if success:
+        results_data = result.get("results")
+        if isinstance(results_data, list):
+            for item in results_data:
+                if isinstance(item, dict) and "messages" in item and isinstance(item["messages"], list):
+                    for msg_obj in item["messages"]:
+                        if isinstance(msg_obj, dict) and "agentMessage" in msg_obj and isinstance(msg_obj["agentMessage"], dict):
+                            agent_msg = msg_obj["agentMessage"]
+                            if "progressMessage" in agent_msg and isinstance(agent_msg["progressMessage"], dict):
+                                text = agent_msg["progressMessage"].get("textMessage")
+                                if text:
+                                    extracted_messages.append(text)
+                            if "terminalMessage" in agent_msg and isinstance(agent_msg["terminalMessage"], dict):
+                                term_msg = agent_msg["terminalMessage"]
+                                if "successMessage" in term_msg and isinstance(term_msg["successMessage"], dict):
+                                    desc = term_msg["successMessage"].get("description")
+                                    if desc:
+                                        extracted_messages.append(desc)
+        elif isinstance(results_data, dict):
+            # Handle the new A2A response format
+            task = results_data.get("task", {})
+            history = task.get("history", [])
+            for entry in history:
+                if isinstance(entry, dict) and entry.get("role") == "ROLE_AGENT":
+                    content = entry.get("content", [])
+                    for content_item in content:
+                        if isinstance(content_item, dict) and "text" in content_item:
+                            text = content_item["text"]
                             if text:
                                 extracted_messages.append(text)
-                        # Extract terminalMessage description
-                        if "terminalMessage" in agent_msg and isinstance(agent_msg["terminalMessage"], dict):
-                            term_msg = agent_msg["terminalMessage"]
-                            if "successMessage" in term_msg and isinstance(term_msg["successMessage"], dict):
-                                desc = term_msg["successMessage"].get("description")
-                                if desc:
-                                    extracted_messages.append(desc)
+                                logger.info(f"Extracted text from history: {text}")
+            
+            # Also check status as backup or additional info
+            status = task.get("status", {})
+            state = status.get("state")
+            if state:
+                extracted_messages.append(f"Agent task state: {state}")
                                 
     return {
         "agent_raw_output": extracted_messages, # Now a List[str]
@@ -414,10 +431,9 @@ async def compile_and_execute_workflow(actual_repository_id: str, actual_workspa
     logger.info(f"END: compile_and_execute_workflow: {result}")
 
     success = result.get("status") == "success"
-    workflow_invocation_full_name = result.get("results", {}).get("name")
     compilation_result_full_name = result.get("results", {}).get("compilationResult")
 
-    workflow_invocation_id = workflow_invocation_full_name.split('/')[-1] if workflow_invocation_full_name else None
+    workflow_invocation_id = result.get("workflow_invocation_id")
     compilation_id = compilation_result_full_name.split('/')[-1] if compilation_result_full_name else None
 
     return {
@@ -490,7 +506,7 @@ async def time_delay(duration: int) -> dict:
 agent_de_check_dq_failures_instruction = """
 Check for data quality failures:
 1. Call `check_for_data_quality_failures(data_quality_scan_name="{{data_quality_scan_name_param}}")`.
-2. After the tool returns, immediately respond using the `set_model_response` tool. The arguments for `set_model_response` MUST be the exact dictionary result returned by `check_for_data_quality_failures`.
+2. After the tool returns, immediately respond with the exact dictionary result returned by `check_for_data_quality_failures` matching the schema. Do not call any other tools.
 """
 agent_de_check_dq_failures = LlmAgent(
     name="DataEngCheckDQFailures",
@@ -506,7 +522,7 @@ agent_de_check_dq_failures = LlmAgent(
 agent_de_get_dq_analysis_instruction = """
 Get detailed data quality failure analysis:
 1. Call `get_failed_data(data_quality_scan_name="{{data_quality_scan_name_param}}", data_quality_scan_dataset_name="{{data_quality_scan_dataset_name}}", data_quality_scan_table_name="{{data_quality_scan_table_name}}")`.
-2. After the tool returns, immediately respond using the `set_model_response` tool. The arguments for `set_model_response` MUST be the exact dictionary result returned by `get_failed_data`.
+2. After the tool returns, immediately respond with the exact dictionary result returned by `get_failed_data` matching the schema. Do not call any other tools.
 """
 agent_de_get_dq_analysis = LlmAgent(
     name="DataEngGetDQAnalysis",
@@ -521,8 +537,8 @@ agent_de_get_dq_analysis = LlmAgent(
 # Step 3: Generate Data Engineering Fix Prompt
 agent_de_generate_fix_prompt_instruction = """
 Your only task is to generate a data engineering fix prompt.
-1. Call `generate_data_enginnering_agent_correction_prompt(failed_rules_details={{failed_rules_details}})`.
-2. After the tool returns, immediately respond by calling `set_model_response` with the exact dictionary result returned by `generate_data_enginnering_agent_correction_prompt`. Do NOT generate any conversational text, explanations, or any other content. Your entire response MUST be solely the `set_model_response` tool call.
+1. Call `generate_data_enginnering_agent_correction_prompt()`.
+2. After the tool returns, immediately respond with the exact dictionary result returned by `generate_data_enginnering_agent_correction_prompt` matching the schema. Do not call any other tools.
 """
 agent_de_generate_fix_prompt = LlmAgent(
     name="DataEngGenerateFixPrompt",
@@ -538,7 +554,7 @@ agent_de_generate_fix_prompt = LlmAgent(
 agent_de_get_repo_id_instruction = """
 Resolve Dataform repository ID:
 1. Call `get_repository_id(repository_name="{{repository_name_param}}")`.
-2. After the tool returns, immediately respond using the `set_model_response` tool. The arguments for `set_model_response` MUST be the exact dictionary result returned by `get_repository_id`.
+2. After the tool returns, immediately respond with the exact dictionary result returned by `get_repository_id` matching the schema. Do not call any other tools.
 """
 agent_de_get_repo_id = LlmAgent(
     name="DataEngGetRepoID",
@@ -553,7 +569,7 @@ agent_de_get_repo_id = LlmAgent(
 agent_de_create_bq_repo_instruction = """
 Create a new BigQuery pipeline repository:
 1. Call `create_bigquery_pipeline(derived_repository_id="{{derived_repository_id}}", repository_display_name="{{repository_name_param}}")`.
-2. After the tool returns, immediately respond using the `set_model_response` tool. The arguments for `set_model_response` MUST be the exact dictionary result returned by `create_bigquery_pipeline`.
+2. After the tool returns, immediately respond with the exact dictionary result returned by `create_bigquery_pipeline` matching the schema. Do not call any other tools.
 """
 agent_de_create_bq_repo = LlmAgent(
     name="DataEngCreateBQRepo",
@@ -568,7 +584,7 @@ agent_de_create_bq_repo = LlmAgent(
 agent_de_create_dataform_repo_instruction = """
 Create a new Dataform pipeline repository:
 1. Call `create_dataform_pipeline(actual_repository_id="{{repository_name_param}}", repository_display_name="{{repository_name_param}}")`.
-2. After the tool returns, immediately respond using the `set_model_response` tool. The arguments for `set_model_response` MUST be the exact dictionary result returned by `create_dataform_pipeline`.
+2. After the tool returns, immediately respond with the exact dictionary result returned by `create_dataform_pipeline` matching the schema. Do not call any other tools.
 """
 agent_de_create_dataform_repo = LlmAgent(
     name="DataEngCreateDFRepo",
@@ -584,7 +600,7 @@ agent_de_create_dataform_repo = LlmAgent(
 agent_de_get_workspace_id_instruction = """
 Resolve Dataform workspace ID:
 1. Call `get_workspace_id(actual_repository_id="{{actual_repository_id}}", target_workspace_name="{{target_workspace_name}}")`.
-2. After the tool returns, immediately respond using the `set_model_response` tool. The arguments for `set_model_response` MUST be the exact dictionary result returned by `get_workspace_id`.
+2. After the tool returns, immediately respond with the exact dictionary result returned by `get_workspace_id` matching the schema. Do not call any other tools.
 """
 agent_de_get_workspace_id = LlmAgent(
     name="DataEngGetWorkspaceID",
@@ -599,7 +615,7 @@ agent_de_get_workspace_id = LlmAgent(
 agent_de_create_workspace_instruction = """
 Create a new Dataform workspace:
 1. Call `create_workspace(actual_repository_id="{{actual_repository_id}}", actual_workspace_id="{{actual_workspace_id}}")`.
-2. After the tool returns, immediately respond using the `set_model_response` tool. The arguments for `set_model_response` MUST be the exact dictionary result returned by `create_workspace`.
+2. After the tool returns, immediately respond with the exact dictionary result returned by `create_workspace` matching the schema. Do not call any other tools.
 """
 agent_de_create_workspace = LlmAgent(
     name="DataEngCreateWorkspace",
@@ -615,7 +631,7 @@ agent_de_create_workspace = LlmAgent(
 agent_de_check_workflow_settings_instruction = """
 Check if 'workflow_settings.yaml' exists in the workspace:
 1. Call `check_for_workflow_settings(actual_repository_id="{{actual_repository_id}}", actual_workspace_id="{{actual_workspace_id}}")`.
-2. After the tool returns, immediately respond using the `set_model_response` tool. The arguments for `set_model_response` MUST be the exact dictionary result returned by `check_for_workflow_settings`.
+2. After the tool returns, immediately respond with the exact dictionary result returned by `check_for_workflow_settings` matching the schema. Do not call any other tools.
 """
 agent_de_check_workflow_settings = LlmAgent(
     name="DataEngCheckWorkflowSettings",
@@ -630,7 +646,7 @@ agent_de_check_workflow_settings = LlmAgent(
 agent_de_write_workflow_settings_instruction = """
 Write the initial 'workflow_settings.yaml' file:
 1. Call `upload_workflow_settings(actual_repository_id="{{actual_repository_id}}", actual_workspace_id="{{actual_workspace_id}}")`.
-2. After the tool returns, immediately respond using the `set_model_response` tool. The arguments for `set_model_response` MUST be the exact dictionary result returned by `upload_workflow_settings`.
+2. After the tool returns, immediately respond with the exact dictionary result returned by `upload_workflow_settings` matching the schema. Do not call any other tools.
 """
 agent_de_write_workflow_settings = LlmAgent(
     name="DataEngWriteWorkflowSettings",
@@ -646,7 +662,7 @@ agent_de_write_workflow_settings = LlmAgent(
 agent_de_commit_workspace_instruction = """
 Commit changes to the Dataform workspace:
 1. Call `commit_source_control(actual_repository_id="{{actual_repository_id}}", actual_workspace_id="{{actual_workspace_id}}", commit_message="{{commit_message}}")`.
-2. After the tool returns, immediately respond using the `set_model_response` tool. The arguments for `set_model_response` MUST be the exact dictionary result returned by `commit_source_control`.
+2. After the tool returns, immediately respond with the exact dictionary result returned by `commit_source_control` matching the schema. Do not call any other tools.
 """
 agent_de_commit_workspace = LlmAgent(
     name="DataEngCommitWorkspace",
@@ -661,8 +677,8 @@ agent_de_commit_workspace = LlmAgent(
 # Step 4.4: Generate/Update Code with BigQuery Data Engineering Agent
 agent_de_call_bq_de_agent_instruction = """
 Call the BigQuery Data Engineering Agent to generate/update code:
-1. Call `call_bigquery_data_engineering_agent(actual_repository_id="{{actual_repository_id}}", actual_workspace_id="{{actual_workspace_id}}", data_engineering_prompt="{{data_engineering_prompt}})`.
-2. After the tool returns, immediately respond using the `set_model_response` tool. The arguments for `set_model_response` MUST be the exact dictionary result returned by `call_bigquery_data_engineering_agent`.
+1. Call `call_bigquery_data_engineering_agent(actual_repository_id="{{actual_repository_id}}", actual_workspace_id="{{actual_workspace_id}}", data_engineering_prompt="{{data_engineering_prompt}}")`.
+2. After the tool returns, immediately respond with the exact dictionary result returned by `call_bigquery_data_engineering_agent` matching the schema. Do not call any other tools.
 """
 agent_de_call_bq_de_agent = LlmAgent(
     name="DataEngCallBQDEAgent",
@@ -678,7 +694,7 @@ agent_de_call_bq_de_agent = LlmAgent(
 agent_de_llm_judge_instruction = """
 Evaluate generated code using LLM Judge:
 1. Call `llm_as_a_judge(prompt_given_to_de_agent="{{data_engineering_prompt}}", bq_agent_response_results={{bq_agent_response_results | tojson}})`.
-2. After the tool returns, immediately respond using the `set_model_response` tool. The arguments for `set_model_response` MUST be the exact dictionary result returned by `llm_as_a_judge`.
+2. After the tool returns, immediately respond with the exact dictionary result returned by `llm_as_a_judge` matching the schema. Do not call any other tools.
 """
 agent_de_llm_judge = LlmAgent(
     name="DataEngLLMJudge",
@@ -694,7 +710,7 @@ agent_de_llm_judge = LlmAgent(
 agent_de_rollback_workspace_instruction = """
 Rollback Dataform workspace:
 1. Call `rollback_source_control(actual_repository_id="{{actual_repository_id}}", actual_workspace_id="{{actual_workspace_id}}")`.
-2. After the tool returns, immediately respond using the `set_model_response` tool. The arguments for `set_model_response` MUST be the exact dictionary result returned by `rollback_source_control`.
+2. After the tool returns, immediately respond with the exact dictionary result returned by `rollback_source_control` matching the schema. Do not call any other tools.
 """
 agent_de_rollback_workspace = LlmAgent(
     name="DataEngRollbackWorkspace",
@@ -710,11 +726,11 @@ agent_de_rollback_workspace = LlmAgent(
 agent_de_check_actions_yaml_instruction = """
 Check if 'definitions/actions.yaml' exists in the workspace:
 1. Call `check_for_actions_settings(actual_repository_id="{{actual_repository_id}}", actual_workspace_id="{{actual_workspace_id}}")`.
-2. After the tool returns, immediately respond using the `set_model_response` tool. The arguments for `set_model_response` MUST be the exact dictionary result returned by `check_for_actions_settings`.
+2. After the tool returns, immediately respond with the exact dictionary result returned by `check_for_actions_settings` matching the schema. Do not call any other tools.
 """
 agent_de_check_actions_yaml = LlmAgent(
     name="DataEngCheckActionsYaml",
-    model=GEMINI_MODEL,
+    model="gemini-2.5-pro",
     instruction=agent_de_check_actions_yaml_instruction,
     input_schema=None,
     output_schema=FileExistenceOutput,
@@ -725,7 +741,7 @@ agent_de_check_actions_yaml = LlmAgent(
 agent_de_write_actions_yaml_instruction = """
 Write the 'definitions/actions.yaml' file:
 1. Call `upload_actions_settings(actual_repository_id="{{actual_repository_id}}", actual_workspace_id="{{actual_workspace_id}}")`.
-2. After the tool returns, immediately respond using the `set_model_response` tool. The arguments for `set_model_response` MUST be the exact dictionary result returned by `upload_actions_settings`.
+2. After the tool returns, immediately respond with the exact dictionary result returned by `upload_actions_settings` matching the schema. Do not call any other tools.
 """
 agent_de_write_actions_yaml = LlmAgent(
     name="DataEngWriteActionsYaml",
@@ -741,7 +757,7 @@ agent_de_write_actions_yaml = LlmAgent(
 agent_de_compile_and_run_instruction = """
 Compile and run Dataform workflow:
 1. Call `compile_and_execute_workflow(actual_repository_id="{{actual_repository_id}}", actual_workspace_id="{{actual_workspace_id}}")`.
-2. After the tool returns, immediately respond using the `set_model_response` tool. The arguments for `set_model_response` MUST be the exact dictionary result returned by `compile_and_execute_workflow`.
+2. After the tool returns, immediately respond with the exact dictionary result returned by `compile_and_execute_workflow` matching the schema. Do not call any other tools.
 """
 agent_de_compile_and_run = LlmAgent(
     name="DataEngCompileAndRun",
@@ -757,7 +773,7 @@ agent_de_compile_and_run = LlmAgent(
 agent_de_check_job_state_instruction = """
 Check the state of the Dataform workflow invocation:
 1. Call `check_workflow_execution_status(repository_id="{{actual_repository_id}}", workflow_invocation_id="{{workflow_invocation_id}}")`.
-2. After the tool returns, immediately respond using the `set_model_response` tool. The arguments for `set_model_response` MUST be the exact dictionary result returned by `check_workflow_execution_status`.
+2. After the tool returns, immediately respond with the exact dictionary result returned by `check_workflow_execution_status` matching the schema. Do not call any other tools.
 """
 agent_de_check_job_state = LlmAgent(
     name="DataEngCheckJobState",
@@ -772,7 +788,7 @@ agent_de_check_job_state = LlmAgent(
 agent_de_time_delay_job_instruction = """
 Your only task is to wait for a specified duration.
 1. Call `time_delay(duration=4)`.
-2. After the tool returns, immediately respond by calling `set_model_response` with the exact dictionary result returned by `time_delay`. Do NOT generate any conversational text, explanations, or any other content. Your entire response MUST be solely the `set_model_response` tool call.
+2. After the tool returns, immediately respond with the exact dictionary result returned by `time_delay` matching the schema. Do not call any other tools.
 """
 agent_de_time_delay_job = LlmAgent(
     name="DataEngTimeDelayJob",
@@ -789,6 +805,7 @@ class DataEngineeringAutonomousWorkflowAgent(BaseAgent):
     """
     Agent that orchestrates autonomous data engineering pipeline correction based on data quality failures.
     """
+    mode: Optional[str] = None
     # Declare the agents passed to the class
     agent_de_check_dq_failures: LlmAgent
     agent_de_get_dq_analysis: LlmAgent

@@ -86,7 +86,7 @@ Use this for simple discovery questions like, "what data profile scans exist on 
 ################################################################################################################
 # create_and_run_data_profile_scan
 ################################################################################################################
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 from typing_extensions import override
 
 from google.adk.agents import BaseAgent
@@ -99,6 +99,8 @@ class CreateAndRunDataProfileScanAgentOrchestrator(BaseAgent):
     An orchestrator agent whose purpose is to run the
     create_and_run_data_profile_scan in a non-blocking way and re-yield its events.
     """
+    mode: Optional[str] = None
+
     def __init__(self, name: str):
         super().__init__(name=name)
 

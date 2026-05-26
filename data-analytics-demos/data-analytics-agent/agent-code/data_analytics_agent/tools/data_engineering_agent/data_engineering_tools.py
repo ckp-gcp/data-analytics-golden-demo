@@ -16,6 +16,7 @@
 import os
 import json
 import logging
+import uuid
 
 import data_analytics_agent.utils.rest_api.rest_api_helper as rest_api_helper 
 import data_analytics_agent.utils.gemini.gemini_helper as gemini_helper
@@ -44,53 +45,53 @@ def _trim_trailing_zeros_string(s_number):
 
 async def call_bigquery_data_engineering_agent(repository_name: str, workspace_name: str, prompt: str) -> dict:
     """
-    Sends a natural language prompt to the internal BigQuery Data Engineering agent which will generate/update
+    Sends a natural language prompt to the BigQuery Data Engineering agent which will generate/update
     the Dataform pipeline code based upon the prompt. The BigQuery Data Engineering agent updates the ETL logic
     within the specified Dataform workspace.
-
-    Args:
-        repository_name (str): The ID of the Dataform repository to use for the pipeline.
-        workspace_name (str): The ID of the Dataform workspace within the repository.
-        prompt (str): The natural language prompt describing the data engineering task to be performed (e.g., "uppercase the 'city' column").
-
-    Returns:
-        dict: A dictionary containing the status and the response from the API, which may include the generated code and task status.
-        {
-            "status": "success" or "failed",
-            "tool_name": "call_bigquery_data_engineering_agent",
-            "query": None,
-            "messages": ["List of messages during processing"],
-            "results": { ... API response from Gemini Data Analytics service ... }
-        }
     """
     project_id = os.getenv("AGENT_ENV_PROJECT_ID")
     dataform_region = os.getenv("AGENT_ENV_DATAFORM_REGION", "us-central1")
-    messages = []
+    messages =[]
 
-    #agent_project_id = "governed-data-1pqzajgatl" # This is hardcoded to an allow list project.
-    agent_project_id = project_id
+    # 1. The hardcoded alpha project is no longer needed. We use your project ID to construct the "tenant".
+    tenant = f"projects/{project_id}/locations/{dataform_region}/agents/dataengineeringagent"
+    
+    # 2. Use the synchronous unary "message:send" endpoint from the A2A API
+    url = f"https://geminidataanalytics.googleapis.com/v1/a2a/{tenant}/v1/message:send"
 
-    # NOTE: Do not take a hard dependency on this REST API call, it will be changing in the future!
-    url = f"https://geminidataanalytics.googleapis.com/v1alpha1/projects/{agent_project_id}/locations/global:run"
+    gcp_resource_id = f"projects/{project_id}/locations/{dataform_region}/repositories/{repository_name}/workspaces/{workspace_name}"
 
-    pipeline_id = f"projects/{project_id}/locations/{dataform_region}/repositories/{repository_name}/workspaces/{workspace_name}"
-
+    # 3. Restructure the payload to match the A2A API specification
     request_body = {
-      "parent": f"projects/{agent_project_id}/locations/global",
-      "pipeline_id": pipeline_id,
-      "messages": [
-        {
-          "user_message": {
-            "text": prompt
-          }
-        }
-      ]
+        "request": {
+            "messageId": str(uuid.uuid4()), # Requires a unique message ID
+            "role": "ROLE_USER",
+            "content":[
+                {
+                    "text": prompt
+                }
+            ]
+        },
+        "metadata": {
+            # The pipeline_id is now passed dynamically as the GcpResource extension metadata
+            "https://geminidataanalytics.googleapis.com/a2a/extensions/gcpresource/v1": {
+                "gcpResourceId": gcp_resource_id
+            }
+        },
+        "tenant": tenant
+    }
+
+    # 4. Activate the GcpResource A2A extension via headers
+    headers = {
+        "A2A-Extensions": "https://geminidataanalytics.googleapis.com/a2a/extensions/gcpresource/v1"
     }
 
     try:
         messages.append(f"Attempting to generate/update data engineering code in workspace '{workspace_name}' for repository '{repository_name}' with prompt: '{prompt}'.")
 
-        json_result = await rest_api_helper.rest_api_helper(url, "POST", request_body)
+        # NOTE: Make sure your `rest_api_helper` is updated to accept and pass the custom `headers` dictionary 
+        # alongside the standard Authorization Bearer token header.
+        json_result = await rest_api_helper.rest_api_helper(url, "POST", request_body, headers=headers)
 
         messages.append("Successfully submitted the data engineering task to the Gemini Data Analytics service.")
         logger.debug(f"call_bigquery_data_engineering_agent json_result: {json_result}")
@@ -402,6 +403,8 @@ async def generate_data_engineering_fix_prompt(analysis_results: list) -> dict:
         "results": {"data_engineering_prompt": ""}
     }
 
+    print("analysis_results", analysis_results)
+    
     column_prompts_xml = ""
     for rule_detail in analysis_results:
         rule_column = rule_detail["rule_column"]
@@ -428,14 +431,14 @@ async def generate_data_engineering_fix_prompt(analysis_results: list) -> dict:
         """
 
     # Updated meta-prompt
-    data_engineering_agent_meta_prompt = f"""There is a broken data engineering pipeline that needs correction.
+    data_engineering_agent_meta_prompt = rf"""There is a broken data engineering pipeline that needs correction.
 I have the below column(s) that have failed a data quality check.
 The data quality check is using regular expressions to test for data integrity.
 For each column listed, please generate short, direct, and actionable prompts for a data engineering agent to correct the ETL process.
 
 **Workflow for each column:**
 1.  **Analyze `bad_values` and `RegEx` (expected good format):**
-    *   Examine the provided `<value>` entries within `<invalid-values-for-{rule_column}>` and compare them against the `RegEx` (which defines the expected good format).
+    *   Examine the provided `<value>` entries within `<invalid-values-for-COLUMN_NAME>` and compare them against the `RegEx` (which defines the expected good format).
     *   Identify distinct patterns of invalid data and determine the necessary correction action for each.
 2.  **Derive Exact Match Regular Expressions and Correction Actions:**
     *   For each *type of correction* required for a column (e.g., removing a suffix, or scaling a number), identify all specific bad data patterns that necessitate that correction.

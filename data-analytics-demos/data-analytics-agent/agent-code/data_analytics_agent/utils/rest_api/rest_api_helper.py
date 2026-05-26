@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 # but for performance in a high-traffic app, a single client instance
 # managed globally or via dependency injection is often better.
 
-async def rest_api_helper(url: str, http_verb: str, request_body: dict = None) -> dict: # Changed request_body to dict type hint
+async def rest_api_helper(url: str, http_verb: str, request_body: dict = None, headers: dict = None) -> dict: # Changed request_body to dict type hint
   """
   Asynchronously calls the Google Cloud REST API passing in the current user's credentials.
   """
@@ -33,26 +33,29 @@ async def rest_api_helper(url: str, http_verb: str, request_body: dict = None) -
       raise RuntimeError(f"Authentication error: {e}")
 
 
-  headers = {
+  request_headers = {
     "Content-Type" : "application/json",
     "Authorization" : f"Bearer {access_token}" # Using f-string for cleaner formatting
   }
 
+  if headers:
+      request_headers.update(headers)
+
   # Use httpx.AsyncClient for asynchronous HTTP requests
-  async with httpx.AsyncClient(timeout=60.0) as client: # Increased timeout for potential long API calls
+  async with httpx.AsyncClient(timeout=300.0) as client: # Increased timeout for potential long A2A API calls
     try:
       response = None
       http_verb = http_verb.upper()
       if http_verb == "GET":
-        response = await client.get(url, headers=headers)
+        response = await client.get(url, headers=request_headers)
       elif http_verb == "POST":
-        response = await client.post(url, json=request_body, headers=headers)
+        response = await client.post(url, json=request_body, headers=request_headers)
       elif http_verb == "PUT":
-        response = await client.put(url, json=request_body, headers=headers)
+        response = await client.put(url, json=request_body, headers=request_headers)
       elif http_verb == "PATCH":
-        response = await client.patch(url, json=request_body, headers=headers)
+        response = await client.patch(url, json=request_body, headers=request_headers)
       elif http_verb == "DELETE":
-        response = await client.delete(url, headers=headers)
+        response = await client.delete(url, headers=request_headers)
       else:
         raise ValueError(f"Unknown HTTP verb: {http_verb}") # Use ValueError for bad input
 
@@ -64,7 +67,7 @@ async def rest_api_helper(url: str, http_verb: str, request_body: dict = None) -
       logger.error(error_message)
       raise RuntimeError(error_message) # Re-raise as RuntimeError or a custom exception
     except httpx.RequestError as e:
-      error_message = f"Error rest_api_helper -> Request Error: {e}, Request URL: {e.request.url}"
+      error_message = f"Error rest_api_helper -> Request Error Type: {type(e).__name__}, Message: {str(e)}, Request URL: {e.request.url}"
       logger.error(error_message)
       raise RuntimeError(error_message)
     except Exception as e:

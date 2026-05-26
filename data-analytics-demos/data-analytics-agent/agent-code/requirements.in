@@ -1,6 +1,8 @@
 # requirements.in
+# pip install pip-tools
+# pip-compile --generate-hashes --index-url=https://pypi.org/simple requirements.in
 
-google-adk==1.27.4
+google-adk==2.1.0
 json-stream==2.3.3
 tenacity==9.1.4
 
