@@ -90,8 +90,8 @@ class LLMJudgeOutput(BaseModel):
     success: bool = Field(description="Did the tool call complete successfully?")
 
 class CompileAndRunWorkflowOutput(BaseModel):
-    workflow_invocation_id: Optional[str] = Field(None, description="The ID of the Dataform workflow invocation.")
-    compilation_id: Optional[str] = Field(None, description="The ID of the Dataform compilation result.")
+    workflow_invocation_id: str = Field(description="The ID of the Dataform workflow invocation.")
+    compilation_id: str = Field(description="The ID of the Dataform compilation result.")
     success: bool = Field(description="Did the tool call complete successfully.")
 
 class CheckJobStateOutput(BaseModel):
@@ -431,7 +431,8 @@ async def compile_and_execute_workflow(actual_repository_id: str, actual_workspa
     logger.info(f"END: compile_and_execute_workflow: {result}")
 
     success = result.get("status") == "success"
-    compilation_result_full_name = result.get("results", {}).get("compilationResult")
+    results = result.get("results") or {}
+    compilation_result_full_name = results.get("compilationResult")
 
     workflow_invocation_id = result.get("workflow_invocation_id")
     compilation_id = compilation_result_full_name.split('/')[-1] if compilation_result_full_name else None

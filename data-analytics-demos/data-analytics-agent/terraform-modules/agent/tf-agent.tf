@@ -394,6 +394,19 @@ resource "google_project_iam_member" "data_analytics_agent_sa_data_agent_statele
 }
 
 
+resource "google_project_iam_member" "data_analytics_agent_sa_service_account_user" {
+  project = var.project_id
+  role    = "roles/iam.serviceAccountUser"
+  member  = "serviceAccount:${google_service_account.data_analytics_agent_service_account.email}"
+
+  depends_on = [
+    google_project_iam_member.data_analytics_agent_sa_data_agent_stateless_user
+  ]
+}
+
+
+
+
 ####################################################################################
 # Cloud Run Deployment - Deploy cloud run and run as sevice account
 ####################################################################################

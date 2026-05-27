@@ -388,7 +388,7 @@ async def create_workspace(repository_id: str, workspace_id: str) -> dict: # Cha
         json_result = await rest_api_helper.rest_api_helper(url, "POST", request_body) # Added await
 
         messages.append(f"Successfully initiated the creation of workspace '{workspace_id}'.")
-        #logger.debug(f"create_workspace json_result: {json_result}")
+        logger.debug(f"create_workspace json_result: {json_result}")
 
         return {
             "status": "success",
@@ -525,7 +525,7 @@ dataformCoreVersion: 3.0.16"""
         # Execute the writeFile request
         write_result = await rest_api_helper.rest_api_helper(write_url, "POST", write_request_body) # Added await
         messages.append(f"Successfully wrote file '{file_path}'.")
-        #logger.debug(f"write_workflow_settings_file result: {write_result}")
+        logger.debug(f"write_workflow_settings_file result: {write_result}")
 
         return {
             "status": "success",
@@ -594,7 +594,7 @@ async def write_actions_yaml_file(repository_id: str, workspace_id: str) -> dict
         # Execute the writeFile request
         write_result = await rest_api_helper.rest_api_helper(write_url, "POST", write_request_body) # Added await
         messages.append(f"Successfully wrote file '{file_path}'.")
-        #logger.debug(f"write_actions_yaml_file result: {write_result}")
+        logger.debug(f"write_actions_yaml_file result: {write_result}")
 
         return {
             "status": "success",
@@ -658,7 +658,7 @@ async def write_dataform_file(repository_id: str, workspace_id: str, file_conten
         # Execute the writeFile request
         write_result = await rest_api_helper.rest_api_helper(write_url, "POST", write_request_body) # Added await
         messages.append(f"Successfully wrote file '{file_path}'.")
-        #logger.debug(f"write_actions_yaml_file result: {write_result}")
+        logger.debug(f"write_actions_yaml_file result: {write_result}")
 
         return {
             "status": "success",
@@ -725,7 +725,7 @@ async def commit_workspace(repository_id: str, workspace_id: str, author_name: s
         json_result = await rest_api_helper.rest_api_helper(url, "POST", request_body) # Added await
         
         messages.append(f"Successfully committed changes with message: '{commit_message}'.")
-        #logger.debug(f"commit_workspace json_result: {json_result}")
+        (f"commit_workspace json_result: {json_result}")
 
         return {
             "status": "success",
@@ -871,7 +871,7 @@ async def compile_and_run_dataform_workflow(repository_id: str, workspace_id: st
         invoke_result = await rest_api_helper.rest_api_helper(invoke_url, "POST", invoke_request_body) # Added await
         
         messages.append("Successfully initiated workflow invocation.")
-        #logger.debug(f"compile_and_run_dataform_workflow invoke_result: {invoke_result}") # This comment had (f"...")
+        logger.debug(f"compile_and_run_dataform_workflow invoke_result: {invoke_result}") # This comment had (f"...")
 
         return {
             "status": "success",

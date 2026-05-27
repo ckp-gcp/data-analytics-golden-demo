@@ -7,13 +7,12 @@ gcloud auth application-default set-quota-project data-analytics-preview
 ```
 
 ### Initial setup 
-Run these from "data-analytics-demos/data-analytics-agent"
-1. ```python -m venv .venv```
-2. activate your virtual environment
+1. ```cd data-analytics-demos/data-analytics-agent/agent-code```
+2. ```python -m venv .venv```
+3. activate your virtual environment
     - Mac:      ```source .venv/bin/activate```
     - Windows: ```.venv\Scripts\activate.ps1```
-3. ```pip install -r requirements.txt```
-4. ```cd agent-code ```
+4. ```pip install -r requirements.txt```
 5. ```adk web -v```
 
 # To generate requirements.txt

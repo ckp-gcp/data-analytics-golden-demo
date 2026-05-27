@@ -113,6 +113,15 @@ resource "google_project_iam_member" "bigquery_pipeline_sa_role_jobUser" {
   ]
 }
 
+resource "google_project_iam_member" "bigquery_pipeline_sa_role_service_account_user" {
+  project = var.project_id
+  role    = "roles/iam.serviceAccountUser"
+  member  = "serviceAccount:${google_service_account.bigquery_pipeline_service_account.email}"
+
+  depends_on = [
+    google_project_iam_member.bigquery_pipeline_sa_role_jobUser
+  ]
+}
 
 #------------------------------------------------------------------------------------------------
 # Force the dataform service account to get created (only created on first use)
