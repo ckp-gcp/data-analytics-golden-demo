@@ -11,28 +11,6 @@ import google.auth.transport.requests
 # Load active dotenv first
 load_dotenv("data_analytics_agent/.env")
 
-# Fallbacks for debugging if not already set
-if not os.getenv("GOOGLE_CLOUD_PROJECT"):
-    os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "TRUE"
-    os.environ["GOOGLE_CLOUD_PROJECT"] = "data-analytics-agent-i9sutj7q"
-    os.environ["GOOGLE_CLOUD_LOCATION"] = "us-central1"
-    os.environ["AGENT_ENV_PROJECT_ID"] = "data-analytics-agent-i9sutj7q"
-    os.environ["AGENT_ENV_BIGQUERY_REGION"] = "us-central1"
-    os.environ["AGENT_ENV_DATAPLEX_SEARCH_REGION"] = "global"
-    os.environ["AGENT_ENV_GOOGLE_API_KEY"] = "AIzaSyDGNii0uQGuzlUUqZxZmotRGpfb9ZSjD4Q"
-    os.environ["AGENT_ENV_DATAPLEX_REGION"] = "us-central1"
-    os.environ["AGENT_ENV_CONVERSATIONAL_ANALYTICS_REGION"] = "global"
-    os.environ["AGENT_ENV_VERTEX_AI_REGION"] = "us-central1"
-    os.environ["AGENT_ENV_BUSINESS_GLOSSARY_REGION"] = "global"
-    os.environ["AGENT_ENV_DATAFORM_REGION"] = "us-central1"
-    os.environ["AGENT_ENV_DATAFORM_AUTHOR_NAME"] = "Adam Paternostro"
-    os.environ["AGENT_ENV_DATAFORM_AUTHOR_EMAIL"] = "admin@paternostro.altostrat.com"
-    os.environ["AGENT_ENV_DATAFORM_WORKSPACE_DEFAULT_NAME"] = "default"
-    os.environ["AGENT_ENV_DATAFORM_SERVICE_ACCOUNT"] = "bigquery-pipeline-sa@data-analytics-agent-i9sutj7q.iam.gserviceaccount.com"
-    os.environ["VERTEX_AI_ENDPOINT"] = "gemini-2.5-flash"
-    os.environ["VERTEX_AI_CONNECTION_NAME"] = "vertex-ai"
-
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
